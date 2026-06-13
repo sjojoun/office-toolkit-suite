@@ -1,0 +1,1380 @@
+cat >> /home/claude/office-toolkit-v2.html << 'JSEOF'
+(function () {
+'use strict';
+
+/* ─── Tiny DOM helpers ─── */
+var $ = function(s,c){ return (c||document).querySelector(s); };
+var $$ = function(s,c){ return Array.from((c||document).querySelectorAll(s)); };
+
+/* ─── Ripple ─── */
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('button');
+  if (!btn) return;
+  var r = document.createElement('span');
+  r.className = 'ripple';
+  var rect = btn.getBoundingClientRect();
+  var sz = Math.max(rect.width, rect.height);
+  r.style.cssText = 'width:'+sz+'px;height:'+sz+'px;left:'+(e.clientX-rect.left-sz/2)+'px;top:'+(e.clientY-rect.top-sz/2)+'px';
+  btn.appendChild(r);
+  r.addEventListener('animationend', function(){ r.remove(); });
+});
+
+/* ─── Toast ─── */
+function toast(msg, type, dur) {
+  type = type || 'success';
+  dur  = dur  || 2600;
+  var wrap = $('#toastWrap');
+  var el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(function(){
+    el.style.opacity = '0';
+    el.style.transform = 'translateX(40px)';
+    setTimeout(function(){ el.remove(); }, 320);
+  }, dur);
+}
+
+/* ─── Clipboard ─── */
+function copyText(text) {
+  if (!text.trim()) { toast('没有可复制的内容','warning'); return; }
+  navigator.clipboard.writeText(text)
+    .then(function(){ toast('已复制到剪贴板 ✓'); })
+    .catch(function(){ toast('复制失败','error'); });
+}
+
+/* ─── Button loading state ─── */
+function setLoading(btn, on) {
+  if (on) { btn.classList.add('loading'); btn.disabled = true; }
+  else    { btn.classList.remove('loading'); btn.disabled = false; }
+}
+
+/* ─── VIP limits ─── */
+var VIP_TEXT   = 5000;
+var VIP_IMG    = 10 * 1024 * 1024;
+var DOC_FILE   = 2  * 1024 * 1024;
+var DOC_TEXT   = 5000;
+
+function showVip(){ $('#vipOverlay').classList.remove('hidden'); }
+function hideVip(){ $('#vipOverlay').classList.add('hidden'); }
+function checkVipText(text){ if(text.length>VIP_TEXT){ showVip(); return true; } return false; }
+
+/* ─── VIP modal events ─── */
+$('#vipBtn').addEventListener('click', showVip);
+$('#vipClose').addEventListener('click', hideVip);
+$('#vipOverlay').addEventListener('click', function(e){ if(e.target===$('#vipOverlay'))hideVip(); });
+$('#vipUpgrade').addEventListener('click', function(){ toast('感谢支持！演示版本，无需真实支付 🎉','warning'); hideVip(); });
+
+/* ─── Theme ─── */
+var body = document.body;
+var savedTheme = localStorage.getItem('ots-theme') || 'light';
+body.setAttribute('data-theme', savedTheme);
+$('#themeToggle').textContent = savedTheme==='dark' ? '☀️' : '🌙';
+$('#themeToggle').addEventListener('click', function(){
+  var cur  = body.getAttribute('data-theme');
+  var next = cur==='dark' ? 'light' : 'dark';
+  body.setAttribute('data-theme', next);
+  $('#themeToggle').textContent = next==='dark' ? '☀️' : '🌙';
+  localStorage.setItem('ots-theme', next);
+});
+
+/* ─── Tab navigation ─── */
+var tabBtns = $$('#tabNav .tab-btn');
+var panels  = $$('.panel[data-panel]');
+tabBtns.forEach(function(btn){
+  btn.addEventListener('click', function(){
+    tabBtns.forEach(function(b){ b.classList.remove('active'); });
+    btn.classList.add('active');
+    var idx = parseInt(btn.dataset.tab);
+    panels.forEach(function(p){ p.classList.remove('active'); });
+    panels[idx].classList.add('active');
+    if (idx===4) checkDocLibs();
+  });
+});
+
+/* ─── Sub-tabs (generic) ─── */
+document.addEventListener('click', function(e){
+  var sub = e.target.closest('.sub-tab');
+  if (!sub) return;
+  var wrap = sub.closest('.panel') || sub.closest('.card') || sub.parentElement.parentElement;
+  $$('.sub-tab', sub.parentElement).forEach(function(b){ b.classList.remove('active'); });
+  sub.classList.add('active');
+  var name = sub.dataset.sub;
+  // find the outer container that holds sub-panels
+  var container = sub.parentElement;
+  while (container && !$$('[data-subpanel]', container).length) {
+    container = container.parentElement;
+    if (!container || container === document.body) { container = null; break; }
+  }
+  if (container) {
+    $$('[data-subpanel]', container).forEach(function(sp){ sp.classList.remove('active'); });
+    var target = $('[data-subpanel="'+name+'"]', container);
+    if (target) target.classList.add('active');
+  }
+  // Handle template panel visibility for tool 2
+  if ($('#tmplWrap')) {
+    $('#tmplWrap').style.display = (name==='regex') ? '' : 'none';
+  }
+});
+
+/* =========================================================
+   TOOL 0 — FORMAT CONVERSION
+   ========================================================= */
+var convType = 'base64';
+var convChips   = $$('#convChips .chip');
+var convInput   = $('#convInput');
+var convOutput  = $('#convOutput');
+var convExtra   = $('#convExtra');
+var convOutXtra = $('#convOutputExtra');
+var convSwapBtn = $('#convSwap');
+var convStats   = $('#convStats');
+
+convChips.forEach(function(chip){
+  chip.addEventListener('click', function(){
+    convChips.forEach(function(c){ c.classList.remove('active'); });
+    chip.classList.add('active');
+    convType = chip.dataset.conv;
+    convInput.value = '';
+    convOutput.value = '';
+    convExtra.innerHTML = '';
+    convOutXtra.innerHTML = '';
+    convSwapBtn.style.display = 'none';
+    convStats.style.display = 'none';
+    buildConvUI();
+  });
+});
+
+function buildConvUI(){
+  convExtra.innerHTML = '';
+  convSwapBtn.style.display = 'none';
+  var g = '<div class="btn-group mb-10">';
+  switch(convType){
+    case 'base64':
+      convExtra.innerHTML = g+'<button class="btn btn-secondary btn-sm active" data-bmode="enc" id="b64Enc">编码 Encode</button><button class="btn btn-secondary btn-sm" data-bmode="dec" id="b64Dec">解码 Decode</button></div>';
+      break;
+    case 'url':
+      convExtra.innerHTML = g+'<button class="btn btn-secondary btn-sm active" data-bmode="enc" id="urlEnc">编码 Encode</button><button class="btn btn-secondary btn-sm" data-bmode="dec" id="urlDec">解码 Decode</button></div>';
+      break;
+    case 'timestamp':
+      convExtra.innerHTML = g+'<button class="btn btn-secondary btn-sm active" data-bmode="ts2d" id="ts2dBtn">时间戳 → 日期</button><button class="btn btn-secondary btn-sm" data-bmode="d2ts" id="d2tsBtn">日期 → 时间戳</button></div>';
+      break;
+    case 'case':
+      convExtra.innerHTML = g+'<button class="btn btn-secondary btn-sm" id="cUpper">全大写</button><button class="btn btn-secondary btn-sm" id="cLower">全小写</button><button class="btn btn-secondary btn-sm" id="cTitle">首字母大写</button><button class="btn btn-secondary btn-sm" id="cSentence">句首大写</button><button class="btn btn-secondary btn-sm" id="cToggle">大小写翻转</button></div>';
+      break;
+    case 'dedup':
+      convExtra.innerHTML = g+'<button class="btn btn-secondary btn-sm" id="dedupOnly">去重</button><button class="btn btn-secondary btn-sm" id="dedupAsc">去重+升序</button><button class="btn btn-secondary btn-sm" id="dedupDesc">去重+降序</button><button class="btn btn-secondary btn-sm" id="sortAsc">仅升序</button><button class="btn btn-secondary btn-sm" id="sortDesc">仅降序</button></div>';
+      break;
+    case 'xml': case 'csv':
+      convSwapBtn.style.display = 'inline-flex';
+      if(convType==='xml')
+        convExtra.innerHTML = g+'<button class="btn btn-secondary btn-sm active" data-bmode="x2j" id="x2jBtn">XML → JSON</button><button class="btn btn-secondary btn-sm" data-bmode="j2x" id="j2xBtn">JSON → XML</button></div>';
+      else
+        convExtra.innerHTML = g+'<button class="btn btn-secondary btn-sm active" data-bmode="c2j" id="c2jBtn">CSV → JSON</button><button class="btn btn-secondary btn-sm" data-bmode="j2c" id="j2cBtn">JSON → CSV</button></div>';
+      break;
+    case 'json':
+      convSwapBtn.style.display = 'inline-flex';
+      break;
+  }
+}
+buildConvUI();
+
+/* Toggle mode buttons inside convExtra */
+convExtra.addEventListener('click', function(e){
+  var btn = e.target.closest('button[data-bmode]');
+  if (!btn) {
+    /* Handle case/dedup action buttons */
+    var ab = e.target.closest('button');
+    if (!ab) return;
+    var text = convInput.value;
+    if (!text.trim()) { toast('请先输入内容','warning'); return; }
+    if (checkVipText(text)) return;
+    var res = '';
+    switch(ab.id){
+      case 'cUpper':    res = text.toUpperCase(); break;
+      case 'cLower':    res = text.toLowerCase(); break;
+      case 'cTitle':    res = text.replace(/\b\w/g, function(c){ return c.toUpperCase(); }); break;
+      case 'cSentence': res = text.replace(/(^\w|[.!?]\s+\w)/g, function(c){ return c.toUpperCase(); }); break;
+      case 'cToggle':   res = text.replace(/[a-zA-Z]/g, function(c){ return c===c.toUpperCase()?c.toLowerCase():c.toUpperCase(); }); break;
+      case 'dedupOnly': res = dedupLines(text, false, null); break;
+      case 'dedupAsc':  res = dedupLines(text, true, 1); break;
+      case 'dedupDesc': res = dedupLines(text, true, -1); break;
+      case 'sortAsc':   res = text.split('\n').filter(function(l){return l.trim();}).sort().join('\n'); break;
+      case 'sortDesc':  res = text.split('\n').filter(function(l){return l.trim();}).sort(function(a,b){return b.localeCompare(a);}).join('\n'); break;
+      default: return;
+    }
+    convOutput.value = res;
+    updateConvStats();
+    return;
+  }
+  $$('button[data-bmode]', convExtra).forEach(function(b){ b.classList.remove('active'); });
+  btn.classList.add('active');
+});
+
+function dedupLines(text, sort, dir){
+  var lines = [...new Set(text.split('\n').filter(function(l){ return l.trim(); }))];
+  if (sort) lines.sort(function(a,b){ return dir===1?a.localeCompare(b):b.localeCompare(a); });
+  return lines.join('\n');
+}
+
+$('#convRun').addEventListener('click', runConversion);
+function runConversion(){
+  var text = convInput.value;
+  if (!text.trim()) { toast('请先输入内容','warning'); return; }
+  if (checkVipText(text)) return;
+  var result = '';
+  try {
+    switch(convType){
+      case 'base64': {
+        var isEnc = !$('#b64Dec') || !$('#b64Dec').classList.contains('active');
+        result = isEnc ? btoa(unescape(encodeURIComponent(text))) : decodeURIComponent(escape(atob(text.trim())));
+        break;
+      }
+      case 'url': {
+        var isEnc2 = !$('#urlDec') || !$('#urlDec').classList.contains('active');
+        result = isEnc2 ? encodeURIComponent(text) : decodeURIComponent(text);
+        break;
+      }
+      case 'json':
+        result = JSON.stringify(JSON.parse(text), null, 2);
+        break;
+      case 'xml': {
+        var isX2j = !$('#j2xBtn') || !$('#j2xBtn').classList.contains('active');
+        result = isX2j ? xmlToJson(text) : jsonToXml(text);
+        break;
+      }
+      case 'csv': {
+        var isC2j = !$('#j2cBtn') || !$('#j2cBtn').classList.contains('active');
+        result = isC2j ? csvToJson(text) : jsonToCsv(text);
+        break;
+      }
+      case 'timestamp': {
+        var isTsMode = !$('#d2tsBtn') || !$('#d2tsBtn').classList.contains('active');
+        if (isTsMode) {
+          var ts = parseInt(text.trim(), 10);
+          if (isNaN(ts)) { toast('请输入有效的时间戳','error'); return; }
+          var ms = ts > 9999999999 ? ts : ts * 1000;
+          var d = new Date(ms);
+          result = 'UTC: '+d.toUTCString()+'\n本地: '+d.toLocaleString()+'\nISO: '+d.toISOString()+'\n时间戳(ms): '+d.getTime()+'\n时间戳(s): '+Math.floor(d.getTime()/1000);
+        } else {
+          var d2 = new Date(text.trim());
+          if (isNaN(d2.getTime())) { toast('请输入有效的日期字符串','error'); return; }
+          result = '时间戳(秒): '+Math.floor(d2.getTime()/1000)+'\n时间戳(毫秒): '+d2.getTime()+'\nISO: '+d2.toISOString()+'\n本地: '+d2.toLocaleString();
+        }
+        break;
+      }
+      case 'case': case 'dedup':
+        toast('请点击上方具体操作按钮','warning'); return;
+    }
+    if (result === undefined || result === null) result = '';
+    convOutput.value = String(result);
+    updateConvStats();
+  } catch(e) {
+    toast('操作失败: '+e.message,'error');
+  }
+}
+
+function updateConvStats(){
+  var t = convOutput.value || convInput.value;
+  if (t) { convStats.style.display='flex'; $('#sChars').textContent=t.length; $('#sLines').textContent=t.split('\n').length; }
+  else   { convStats.style.display='none'; }
+}
+
+$('#convClear').addEventListener('click', function(){
+  convInput.value=''; convOutput.value='';
+  convExtra.innerHTML=''; buildConvUI();
+  convStats.style.display='none';
+});
+$('#convCopy').addEventListener('click', function(){ copyText(convOutput.value); });
+$('#convSwap').addEventListener('click', function(){
+  var tmp=convInput.value; convInput.value=convOutput.value; convOutput.value=tmp; updateConvStats();
+});
+
+/* ─── XML helpers ─── */
+function xmlToJson(xmlStr){
+  try{
+    var parser=new DOMParser();
+    var doc=parser.parseFromString(xmlStr,'text/xml');
+    if(doc.querySelector('parsererror')){ toast('XML 解析错误','error'); return ''; }
+    return JSON.stringify(xmlNodeToObj(doc.documentElement),null,2);
+  }catch(e){ toast('XML 转换失败: '+e.message,'error'); return ''; }
+}
+function xmlNodeToObj(node){
+  var obj={};
+  for(var i=0;i<node.attributes.length;i++) obj['@'+node.attributes[i].name]=node.attributes[i].value;
+  var children=Array.from(node.children);
+  if(!children.length){
+    var t=node.textContent.trim();
+    if(t){ if(!Object.keys(obj).length) return t; obj['#text']=t; }
+    return Object.keys(obj).length?obj:'';
+  }
+  children.forEach(function(child){
+    var tag=child.tagName, val=xmlNodeToObj(child);
+    if(obj[tag]===undefined) obj[tag]=val;
+    else{ if(!Array.isArray(obj[tag])) obj[tag]=[obj[tag]]; obj[tag].push(val); }
+  });
+  return obj;
+}
+function jsonToXml(jsonStr){
+  try{
+    var obj=JSON.parse(jsonStr);
+    return '<?xml version="1.0" encoding="UTF-8"?>\n'+formatXml(objToXml(obj,'root'));
+  }catch(e){ toast('JSON 解析失败: '+e.message,'error'); return ''; }
+}
+function objToXml(obj,tag){
+  if(typeof obj!=='object'||obj===null) return '<'+tag+'>'+escXml(String(obj))+'</'+tag+'>';
+  if(Array.isArray(obj)) return obj.map(function(item){ return objToXml(item,tag); }).join('');
+  var xml='<'+tag+'>';
+  for(var k in obj){ if(Object.prototype.hasOwnProperty.call(obj,k)&&k[0]!=='@') xml+=objToXml(obj[k],k); }
+  return xml+'</'+tag+'>';
+}
+function escXml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function formatXml(xml){
+  var f='',ind=0,lines=xml.replace(/>\s*</g,'>\n<').split('\n');
+  lines.forEach(function(line){
+    line=line.trim();
+    if(!line)return;
+    if(line.match(/^<\/\w/)) ind=Math.max(0,ind-1);
+    f+='  '.repeat(ind)+line+'\n';
+    if(line.match(/^<\w[^>]*[^\/]>$/)&&!line.match(/^<\?/)) ind++;
+  });
+  return f.trim();
+}
+
+/* ─── CSV helpers ─── */
+function csvToJson(csv){
+  try{
+    var lines=csv.trim().split('\n');
+    if(lines.length<2){ toast('CSV 至少需要表头+一行数据','error'); return ''; }
+    var hdrs=parseCsvLine(lines[0]);
+    var result=[];
+    for(var i=1;i<lines.length;i++){
+      if(!lines[i].trim()) continue;
+      var vals=parseCsvLine(lines[i]);
+      var row={};
+      hdrs.forEach(function(h,idx){ row[h]=vals[idx]||''; });
+      result.push(row);
+    }
+    return JSON.stringify(result,null,2);
+  }catch(e){ toast('CSV 转换失败: '+e.message,'error'); return ''; }
+}
+function parseCsvLine(line){
+  var res=[],cur='',inQ=false;
+  for(var i=0;i<line.length;i++){
+    var ch=line[i];
+    if(inQ){ if(ch==='"'){ if(line[i+1]==='"'){cur+='"';i++;} else inQ=false; } else cur+=ch; }
+    else{ if(ch==='"') inQ=true; else if(ch===','){res.push(cur.trim());cur='';} else cur+=ch; }
+  }
+  res.push(cur.trim());
+  return res;
+}
+function jsonToCsv(json){
+  try{
+    var data=JSON.parse(json);
+    var arr=Array.isArray(data)?data:[data];
+    if(!arr.length){ toast('JSON 数组为空','warning'); return ''; }
+    var hdrs=Object.keys(arr[0]);
+    var lines=[hdrs.join(',')];
+    arr.forEach(function(row){
+      lines.push(hdrs.map(function(h){
+        var v=String(row[h]!==undefined?row[h]:'');
+        return (v.indexOf(',')>-1||v.indexOf('"')>-1)?'"'+v.replace(/"/g,'""')+'"':v;
+      }).join(','));
+    });
+    return lines.join('\n');
+  }catch(e){ toast('JSON 解析失败: '+e.message,'error'); return ''; }
+}
+
+/* =========================================================
+   TOOL 1 — IMAGE PROCESSING
+   ========================================================= */
+var imgCanvas   = $('#imgCanvas');
+var ctx         = imgCanvas.getContext('2d');
+var imgDrop     = $('#imgDrop');
+var imgFile     = $('#imgFile');
+var canvasWrap  = $('#canvasWrap');
+var origImg     = null;
+var imgFileName = '';
+var imgRot = 0, imgFlipH = false, imgFlipV = false;
+var cropping = false, cropStart = null, cropRect = null, cropOverlay = null;
+
+imgDrop.addEventListener('click', function(){ imgFile.click(); });
+imgFile.addEventListener('change', function(e){ if(e.target.files[0]) loadImg(e.target.files[0]); });
+imgDrop.addEventListener('dragover', function(e){ e.preventDefault(); imgDrop.classList.add('drag-over'); });
+imgDrop.addEventListener('dragleave', function(){ imgDrop.classList.remove('drag-over'); });
+imgDrop.addEventListener('drop', function(e){
+  e.preventDefault(); imgDrop.classList.remove('drag-over');
+  if(e.dataTransfer.files[0]) loadImg(e.dataTransfer.files[0]);
+});
+
+function loadImg(file){
+  if(!file.type.match(/^image\//i)){ toast('请选择图片文件','error'); return; }
+  if(file.size > VIP_IMG){ showVip(); return; }
+  imgFileName = file.name;
+  var reader = new FileReader();
+  reader.onload = function(e){
+    var img = new Image();
+    img.onload = function(){
+      origImg = img;
+      resetImgState();
+      renderImg();
+      imgDrop.style.display = 'none';
+      canvasWrap.style.display = 'flex';
+      toast('图片已加载 ✓');
+    };
+    img.onerror = function(){ toast('图片加载失败，文件可能已损坏','error'); };
+    img.src = e.target.result;
+  };
+  reader.onerror = function(){ toast('文件读取失败','error'); };
+  reader.readAsDataURL(file);
+}
+
+function resetImgState(){
+  imgRot=0; imgFlipH=false; imgFlipV=false;
+  ['bright','cont','sat'].forEach(function(id){
+    var sl=$('#'+id+'Slider'); if(sl){sl.value=100; $('#'+id+'Val').textContent='100%';}
+  });
+  $('#qualSlider').value=80; $('#qualVal').textContent='80%';
+  cropping=false; cropRect=null;
+  if(cropOverlay){ cropOverlay.remove(); cropOverlay=null; }
+  imgCanvas.style.cursor='default';
+  $('#cropMode').textContent='✂ 裁剪';
+}
+
+function renderImg(){
+  if(!origImg) return;
+  var sw = origImg.naturalWidth || origImg.width;
+  var sh = origImg.naturalHeight || origImg.height;
+  var rw = imgRot%180!==0 ? sh : sw;
+  var rh = imgRot%180!==0 ? sw : sh;
+  var maxW = canvasWrap.offsetWidth - 32 || 800;
+  var maxH = 520;
+  var scale = Math.min(maxW/rw, maxH/rh, 1);
+  var cw = Math.round(rw*scale);
+  var ch = Math.round(rh*scale);
+  if(imgCanvas.width!==cw) imgCanvas.width=cw;
+  if(imgCanvas.height!==ch) imgCanvas.height=ch;
+  ctx.clearRect(0,0,cw,ch);
+  ctx.save();
+  var b=$('#brightSlider').value, c=$('#contSlider').value, s=$('#satSlider').value;
+  var f='';
+  if(b!=100) f+='brightness('+b+'%) ';
+  if(c!=100) f+='contrast('+c+'%) ';
+  if(s!=100) f+='saturate('+s+'%) ';
+  if(f) ctx.filter=f.trim();
+  ctx.translate(cw/2,ch/2);
+  if(imgFlipH) ctx.scale(-1,1);
+  if(imgFlipV) ctx.scale(1,-1);
+  ctx.rotate(imgRot*Math.PI/180);
+  ctx.drawImage(origImg, -sw*scale/2, -sh*scale/2, sw*scale, sh*scale);
+  ctx.restore();
+}
+
+/* Sliders */
+[['qualSlider','qualVal','%'],['brightSlider','brightVal','%'],['contSlider','contVal','%'],['satSlider','satVal','%']].forEach(function(t){
+  var sl=$('#'+t[0]), vl=$('#'+t[1]);
+  if(!sl||!vl) return;
+  sl.addEventListener('input',function(){
+    vl.textContent=sl.value+t[2];
+    if(t[0]!=='qualSlider') renderImg();
+  });
+});
+
+$('#flipH').addEventListener('click',function(){ imgFlipH=!imgFlipH; renderImg(); });
+$('#flipV').addEventListener('click',function(){ imgFlipV=!imgFlipV; renderImg(); });
+$('#rotate90').addEventListener('click',function(){ imgRot=(imgRot+90)%360; renderImg(); });
+$('#resetImg').addEventListener('click',function(){
+  if(!origImg){ toast('请先加载图片','warning'); return; }
+  resetImgState(); renderImg();
+});
+
+/* Crop mode */
+$('#cropMode').addEventListener('click',function(){
+  if(!origImg){ toast('请先加载图片','warning'); return; }
+  cropping=!cropping;
+  $('#cropMode').textContent = cropping ? '✂ 拖选区域' : '✂ 裁剪';
+  imgCanvas.style.cursor = cropping ? 'crosshair' : 'default';
+  if(!cropping && cropOverlay){ cropOverlay.remove(); cropOverlay=null; cropRect=null; }
+});
+imgCanvas.addEventListener('mousedown',function(e){
+  if(!cropping) return;
+  var rect=imgCanvas.getBoundingClientRect();
+  cropStart={x:(e.clientX-rect.left)*(imgCanvas.width/rect.width), y:(e.clientY-rect.top)*(imgCanvas.height/rect.height)};
+  if(cropOverlay){ cropOverlay.remove(); }
+  cropOverlay=document.createElement('div'); cropOverlay.className='crop-overlay';
+  canvasWrap.appendChild(cropOverlay);
+});
+imgCanvas.addEventListener('mousemove',function(e){
+  if(!cropping||!cropStart) return;
+  var rect=imgCanvas.getBoundingClientRect();
+  var wRect=canvasWrap.getBoundingClientRect();
+  var sx=imgCanvas.width/rect.width, sy=imgCanvas.height/rect.height;
+  var cx=(e.clientX-rect.left)*sx, cy=(e.clientY-rect.top)*sy;
+  var x=Math.min(cropStart.x,cx), y=Math.min(cropStart.y,cy);
+  var w=Math.abs(cx-cropStart.x), h=Math.abs(cy-cropStart.y);
+  cropRect={x:x,y:y,w:w,h:h};
+  if(cropOverlay){
+    cropOverlay.style.left  = (rect.left-wRect.left+x/sx)+'px';
+    cropOverlay.style.top   = (rect.top-wRect.top+y/sy)+'px';
+    cropOverlay.style.width = (w/sx)+'px';
+    cropOverlay.style.height= (h/sy)+'px';
+  }
+});
+imgCanvas.addEventListener('mouseup',function(){
+  if(!cropping||!cropRect){ cropStart=null; return; }
+  cropStart=null;
+  if(cropRect.w<8||cropRect.h<8){ toast('选区太小，请重新选择','warning'); return; }
+  var data=ctx.getImageData(cropRect.x,cropRect.y,cropRect.w,cropRect.h);
+  imgCanvas.width=cropRect.w; imgCanvas.height=cropRect.h;
+  ctx.putImageData(data,0,0);
+  var tmp=new Image();
+  tmp.onload=function(){ origImg=tmp; resetImgState(); renderImg(); };
+  tmp.src=imgCanvas.toDataURL();
+  cropping=false; $('#cropMode').textContent='✂ 裁剪';
+  imgCanvas.style.cursor='default';
+  if(cropOverlay){ cropOverlay.remove(); cropOverlay=null; } cropRect=null;
+});
+
+/* Watermark */
+$('#applyWatermark').addEventListener('click',function(){
+  var txt=$('#watermarkTxt').value.trim();
+  if(!txt){ toast('请输入水印文字','warning'); return; }
+  if(!origImg){ toast('请先加载图片','warning'); return; }
+  ctx.save();
+  var fs=Math.max(18,imgCanvas.width/18);
+  ctx.font='bold '+fs+'px -apple-system, sans-serif';
+  ctx.globalAlpha=0.55;
+  ctx.fillStyle='#fff';
+  ctx.strokeStyle='rgba(0,0,0,0.4)';
+  ctx.lineWidth=2.5;
+  var mx=ctx.measureText(txt), px=imgCanvas.width-mx.width-16, py=imgCanvas.height-16;
+  ctx.strokeText(txt,px,py);
+  ctx.fillText(txt,px,py);
+  ctx.restore();
+  var tmp=new Image();
+  tmp.onload=function(){ origImg=tmp; renderImg(); };
+  tmp.src=imgCanvas.toDataURL('image/png',1);
+  toast('水印已应用 ✓');
+});
+
+/* Download – full-res offscreen canvas */
+$('#downloadImg').addEventListener('click',function(){
+  if(!origImg){ toast('请先加载图片','warning'); return; }
+  var fmt=$('#exportFmt').value;
+  var quality=parseInt($('#qualSlider').value)/100;
+  var sw=origImg.naturalWidth||origImg.width;
+  var sh=origImg.naturalHeight||origImg.height;
+  var rw=imgRot%180!==0?sh:sw, rh=imgRot%180!==0?sw:sh;
+  var off=document.createElement('canvas');
+  off.width=rw; off.height=rh;
+  var oc=off.getContext('2d');
+  oc.save();
+  var b=$('#brightSlider').value, c=$('#contSlider').value, s=$('#satSlider').value;
+  var f='';
+  if(b!=100) f+='brightness('+b+'%) ';
+  if(c!=100) f+='contrast('+c+'%) ';
+  if(s!=100) f+='saturate('+s+'%) ';
+  if(f) oc.filter=f.trim();
+  oc.translate(rw/2,rh/2);
+  if(imgFlipH) oc.scale(-1,1);
+  if(imgFlipV) oc.scale(1,-1);
+  oc.rotate(imgRot*Math.PI/180);
+  oc.drawImage(origImg,-sw/2,-sh/2,sw,sh);
+  oc.restore();
+  try{
+    var dataUrl=off.toDataURL(fmt, fmt==='image/png'?undefined:quality);
+    var ext=fmt==='image/jpeg'?'jpg':fmt==='image/png'?'png':'webp';
+    var a=document.createElement('a');
+    a.download='processed-'+Date.now()+'.'+ext;
+    a.href=dataUrl; a.click();
+    toast('图片已下载（原始分辨率）✓');
+  }catch(e){ toast('导出失败: '+e.message,'error'); }
+  finally{ off.width=0; off.height=0; }
+});
+
+/* =========================================================
+   TOOL 2 — REGEX & CODE
+   ========================================================= */
+var regexInput = $('#regexInput');
+var regexPat   = $('#regexPat');
+var regexFlags = $('#regexFlags');
+var regexResult= $('#regexResult');
+var regexErr   = $('#regexErr');
+var regexStats = $('#regexStats');
+
+function runRegex(){
+  var text=regexInput.value, pat=regexPat.value.trim(), flags=regexFlags.value.trim();
+  regexErr.style.display='none'; regexStats.style.display='none';
+  if(!pat){ regexResult.innerHTML='<span style="color:var(--text-3)">等待输入正则表达式…</span>'; return; }
+  if(!text){ regexResult.innerHTML='<span style="color:var(--text-3)">请输入测试文本</span>'; return; }
+  if(text.length>VIP_TEXT){ showVip(); return; }
+  try{
+    var rx=new RegExp(pat, flags||'g');
+    var matches=[], m;
+    var safePat=new RegExp(pat, flags.indexOf('g')>=0?flags:(flags+'g'));
+    while((m=safePat.exec(text))!==null){
+      matches.push({start:m.index, len:m[0].length, text:m[0]});
+      if(!safePat.global && !safePat.sticky) break;
+      if(m[0].length===0) safePat.lastIndex++;
+      if(matches.length>5000) break;
+    }
+    if(!matches.length){
+      regexResult.innerHTML='<span style="color:var(--text-3)">无匹配结果</span>';
+    }else{
+      var h='', last=0;
+      matches.forEach(function(hi){
+        h+=escHtml(text.slice(last,hi.start));
+        h+='<span class="match-hl">'+escHtml(hi.text)+'</span>';
+        last=hi.start+hi.len;
+      });
+      h+=escHtml(text.slice(last));
+      regexResult.innerHTML=h;
+      $('#matchCount').textContent=matches.length;
+      regexStats.style.display='flex';
+    }
+  }catch(e){
+    regexErr.textContent='⚠ '+e.message; regexErr.style.display='block';
+    regexResult.innerHTML='<span style="color:var(--text-3)">正则表达式有误</span>';
+  }
+}
+function escHtml(s){ var d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+regexPat.addEventListener('input', runRegex);
+regexFlags.addEventListener('input', runRegex);
+regexInput.addEventListener('input', runRegex);
+
+$$('.tmpl-item').forEach(function(item){
+  item.addEventListener('click',function(){
+    regexPat.value=item.dataset.regex||'';
+    regexFlags.value=item.dataset.flags||'';
+    runRegex();
+    toast('已加载: '+(item.dataset.desc||'模板'));
+  });
+});
+
+/* Code formatter */
+$('#fmtBtn').addEventListener('click',function(){
+  var code=$('#codeInput').value;
+  if(!code.trim()){ toast('请先输入代码','warning'); return; }
+  if(checkVipText(code)) return;
+  var type=$('#codeType').value, indent=parseInt($('#indentSize').value)||2;
+  try{
+    var res='';
+    switch(type){
+      case 'json': res=JSON.stringify(JSON.parse(code),null,indent); break;
+      case 'js':   res=formatJS(code,indent); break;
+      case 'css':  res=formatCSS(code,indent); break;
+      case 'html': res=formatHTML(code,indent); break;
+    }
+    $('#codeOutput').value=res;
+  }catch(e){ toast('格式化失败: '+e.message,'error'); }
+});
+$('#minifyBtn').addEventListener('click',function(){
+  var code=$('#codeInput').value;
+  if(!code.trim()){ toast('请先输入代码','warning'); return; }
+  var type=$('#codeType').value, res='';
+  try{
+    switch(type){
+      case 'json': res=JSON.stringify(JSON.parse(code)); break;
+      case 'js':   res=code.replace(/\/\*[\s\S]*?\*\//g,'').replace(/\/\/.*$/gm,'').replace(/\s+/g,' ').replace(/\s*([{}();,:])\s*/g,'$1').trim(); break;
+      case 'css':  res=code.replace(/\s+/g,' ').replace(/\s*([{}:;,])\s*/g,'$1').replace(/\/\*[\s\S]*?\*\//g,'').trim(); break;
+      case 'html': res=code.replace(/>\s+</g,'><').replace(/\s{2,}/g,' ').trim(); break;
+    }
+    $('#codeOutput').value=res;
+  }catch(e){ toast('压缩失败: '+e.message,'error'); }
+});
+$('#copyCode').addEventListener('click',function(){ copyText($('#codeOutput').value); });
+
+function formatJS(code,indent){
+  var sp=''.padStart(indent,' '), level=0, result='', i=0;
+  var inStr=false, strCh='', inBlockC=false, inLineC=false;
+  while(i<code.length){
+    var ch=code[i], prev=i>0?code[i-1]:'';
+    if(!inBlockC&&!inLineC&&(ch==='"'||ch==="'"||ch==='`')){
+      if(!inStr){inStr=true;strCh=ch;}
+      else if(ch===strCh&&prev!=='\\'){ inStr=false; }
+    }
+    if(!inStr&&!inBlockC&&!inLineC&&ch==='/'&&code[i+1]==='*'){inBlockC=true;}
+    if(inBlockC&&ch==='*'&&code[i+1]==='/'){ result+='*/'; i+=2; inBlockC=false; continue; }
+    if(!inStr&&!inBlockC&&!inLineC&&ch==='/'&&code[i+1]==='/'){ inLineC=true; }
+    if(inLineC&&ch==='\n'){ inLineC=false; result+='\n'; i++; continue; }
+    if(!inStr&&!inBlockC&&!inLineC){
+      if(ch==='{'){result+=ch+'\n'; level++; result+=sp.repeat(level); i++; continue;}
+      if(ch==='}'){level=Math.max(0,level-1); result=result.trimEnd()+'\n'+sp.repeat(level)+'}'; i++; continue;}
+      if(ch===';'){result+=ch+'\n'+sp.repeat(level); i++; continue;}
+    }
+    result+=ch; i++;
+  }
+  return result;
+}
+function formatCSS(code,indent){
+  var sp=''.padStart(indent,' '), result='', lines=code.replace(/\{/g,'{\n').replace(/\}/g,'\n}\n').replace(/;/g,';\n').split('\n');
+  var lv=0;
+  lines.forEach(function(line){
+    line=line.trim();
+    if(!line)return;
+    if(line==='}'){lv=Math.max(0,lv-1); result+=sp.repeat(lv)+line+'\n';}
+    else if(line.endsWith('{')){ result+=sp.repeat(lv)+line+'\n'; lv++; }
+    else{ result+=sp.repeat(lv)+line+'\n'; }
+  });
+  return result.trim();
+}
+function formatHTML(code,indent){
+  var sp=''.padStart(indent,' '), lv=0, result='';
+  var tokens=code.replace(/>\s*</g,'>\n<').split('\n');
+  tokens.forEach(function(t){
+    t=t.trim();
+    if(!t)return;
+    if(t.match(/^<\//)) lv=Math.max(0,lv-1);
+    result+=sp.repeat(lv)+t+'\n';
+    if(t.match(/^<[^\/!?][^>]*[^\/]>$/)&&!t.match(/^<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)/i)) lv++;
+  });
+  return result.trim();
+}
+
+/* =========================================================
+   TOOL 3 — BATCH TEXT PROCESSING
+   ========================================================= */
+var batchIn    = $('#batchIn');
+var batchOut   = $('#batchOut');
+var batchProg  = $('#batchProg');
+var batchProgF = $('#batchProgFill');
+
+function updateBatchStats(){
+  var t=batchIn.value;
+  $('#bChars').textContent=t.length;
+  $('#bLines').textContent=t.split('\n').length;
+}
+batchIn.addEventListener('input', updateBatchStats);
+
+$('#batchOpenFile').addEventListener('click', function(){ $('#batchFile').click(); });
+$('#batchFile').addEventListener('change',function(e){
+  var file=e.target.files[0];
+  if(!file) return;
+  if(file.size > 5*1024*1024){ toast('文件过大（>5 MB），请用文本编辑器预先截取','warning'); return; }
+  var reader=new FileReader();
+  reader.onload=function(e2){ batchIn.value=e2.target.result; updateBatchStats(); toast('文件已加载 ✓'); };
+  reader.onerror=function(){ toast('文件读取失败','error'); };
+  reader.readAsText(file,'utf-8');
+});
+$('#batchClear').addEventListener('click',function(){ batchIn.value=''; batchOut.value=''; updateBatchStats(); });
+
+/* Large-text chunked processor */
+function processLargeText(text, transformLine, onDone){
+  var lines=text.split('\n');
+  var CHUNK=2000, i=0, results=[];
+  batchProg.style.display='block';
+  function tick(){
+    var end=Math.min(i+CHUNK,lines.length);
+    for(;i<end;i++) results.push(transformLine(lines[i],i,lines));
+    batchProgF.style.width=Math.round((i/lines.length)*100)+'%';
+    if(i<lines.length){ requestAnimationFrame(tick); }
+    else{
+      batchProg.style.display='none';
+      batchProgF.style.width='0%';
+      onDone(results);
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+$('#replaceBtn').addEventListener('click',function(){
+  var text=batchIn.value;
+  if(!text){ toast('请先输入文本','warning'); return; }
+  var find=$('#findTxt').value, replace=$('#replaceTxt').value;
+  if(!find){ toast('请输入查找内容','warning'); return; }
+  var useRx=$('#useRegexReplace').checked;
+  try{
+    var result=useRx ? text.replace(new RegExp(find,'g'),replace) : text.split(find).join(replace);
+    batchOut.value=result;
+    toast('替换完成 ✓');
+  }catch(e){ toast('正则错误: '+e.message,'error'); }
+});
+$('#replacePreview').addEventListener('click',function(){
+  var text=batchIn.value, find=$('#findTxt').value;
+  if(!text||!find){ toast('请先输入文本和查找内容','warning'); return; }
+  var useRx=$('#useRegexReplace').checked;
+  try{
+    var cnt=useRx ? (text.match(new RegExp(find,'g'))||[]).length : (function(){ var c=0,p=-1; while((p=text.indexOf(find,p+1))!==-1)c++; return c; })();
+    toast('找到 '+cnt+' 处匹配'+(cnt?'':'，未找到'));
+  }catch(e){ toast('正则错误: '+e.message,'error'); }
+});
+
+$('#splitBtn').addEventListener('click',function(){
+  var text=batchIn.value, delim=$('#splitDelim').value;
+  if(!text||!delim){ toast('请先输入文本和分隔符','warning'); return; }
+  var useRx=$('#useRegexSplit').checked;
+  try{
+    var parts=useRx ? text.split(new RegExp(delim)) : text.split(delim);
+    batchOut.value=parts.map(function(p,i){ return '['+(i+1)+'] '+p; }).join('\n');
+    $('#splitCnt').textContent=parts.length;
+    toast('分割完成，共 '+parts.length+' 段');
+  }catch(e){ toast('分割失败: '+e.message,'error'); }
+});
+$('#mergeBtn').addEventListener('click',function(){
+  var text=batchIn.value;
+  if(!text){ toast('请先输入文本','warning'); return; }
+  var sep=$('#mergeSep').value.replace(/\\n/g,'\n').replace(/\\t/g,'\t');
+  var lines=text.split('\n').filter(function(l){ return l.trim(); });
+  batchOut.value=lines.join(sep);
+  toast('合并完成，共 '+lines.length+' 行');
+});
+
+$('#cleanSpaces').addEventListener('click',function(){
+  var t=batchIn.value;
+  if(!t){ toast('请先输入文本','warning'); return; }
+  if(t.length > 200000){
+    processLargeText(t, function(line){ return line.replace(/[ \t]+/g,' ').trimEnd(); }, function(res){
+      batchOut.value=res.join('\n').replace(/\n{3,}/g,'\n\n');
+      toast('清理完成 ✓');
+    });
+  } else {
+    batchOut.value=t.replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n');
+    toast('清理完成 ✓');
+  }
+});
+$('#addLineNums').addEventListener('click',function(){
+  var t=batchIn.value;
+  if(!t){ toast('请先输入文本','warning'); return; }
+  var lines=t.split('\n'), pad=String(lines.length).length;
+  processLargeText(t, function(line,i){ return String(i+1).padStart(pad,'0')+' | '+line; }, function(res){
+    batchOut.value=res.join('\n'); toast('行号已添加 ✓');
+  });
+});
+$('#removeBlank').addEventListener('click',function(){
+  var t=batchIn.value;
+  if(!t){ toast('请先输入文本','warning'); return; }
+  batchOut.value=t.split('\n').filter(function(l){ return l.trim()!==''; }).join('\n');
+  toast('空行已删除 ✓');
+});
+$('#trimLines').addEventListener('click',function(){
+  var t=batchIn.value;
+  if(!t){ toast('请先输入文本','warning'); return; }
+  processLargeText(t, function(line){ return line.trim(); }, function(res){
+    batchOut.value=res.join('\n'); toast('首尾空格已去除 ✓');
+  });
+});
+$('#sortLines').addEventListener('click',function(){
+  var t=batchIn.value;
+  if(!t){ toast('请先输入文本','warning'); return; }
+  batchOut.value=t.split('\n').sort(function(a,b){ return a.localeCompare(b,'zh'); }).join('\n');
+  toast('排序完成 ✓');
+});
+$('#gbkFix').addEventListener('click',function(){
+  var t=batchIn.value;
+  if(!t){ toast('请先输入文本','warning'); return; }
+  try{
+    /* Heuristic: re-encode UTF-8 bytes, re-decode as GBK */
+    var encoder=new TextEncoder();
+    var bytes=encoder.encode(t);
+    var decoded=new TextDecoder('gbk',{fatal:false}).decode(bytes);
+    var garbled=looksGarbled(decoded);
+    batchOut.value=decoded;
+    toast(garbled?'修复效果有限，请检查输出':'乱码修复完成 ✓', garbled?'warning':'success');
+  }catch(e){ toast('修复失败: '+e.message,'error'); }
+});
+function looksGarbled(t){
+  var s=t.slice(0,600);
+  var bad=(s.match(/[\ufffd\u0000-\u0008\u000b\u000c\u000e-\u001f]/g)||[]).length;
+  return bad/Math.max(s.length,1)>0.08;
+}
+
+$('#batchCopy').addEventListener('click',function(){ copyText(batchOut.value); });
+$('#batchDownload').addEventListener('click',function(){
+  if(!batchOut.value.trim()){ toast('没有可下载的内容','warning'); return; }
+  var blob=new Blob([batchOut.value],{type:'text/plain;charset=utf-8'});
+  var url=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=url; a.download='batch-'+Date.now()+'.txt'; a.click();
+  URL.revokeObjectURL(url);
+  toast('文件已下载 ✓');
+});
+
+/* =========================================================
+   TOOL 4 — DOCUMENT CONVERTER
+   ========================================================= */
+if(typeof pdfjsLib!=='undefined'){
+  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+function checkDocLibs(){
+  var missing=[];
+  if(typeof mammoth==='undefined') missing.push('mammoth.js');
+  if(typeof pdfjsLib==='undefined') missing.push('pdf.js');
+  if(typeof docx==='undefined')     missing.push('docx');
+  var note=$('#docLibNote');
+  if(missing.length){
+    note.textContent='⚠ CDN 加载失败: '+missing.join('、')+' — 请检查网络并刷新';
+    note.className='note note-warning mt-10';
+  }else{
+    note.textContent='✅ 所有组件就绪';
+    note.className='note note-success mt-10';
+    setTimeout(function(){
+      note.textContent='✨ PDF 通过浏览器原生引擎渲染，中英文完美支持';
+      note.className='note note-info mt-10';
+    },3000);
+  }
+}
+
+var docFile     = null;   /* { name, size, ext, arrayBuffer } */
+var docMode     = 'file'; /* 'file' | 'text' */
+var docBlob     = null;
+var docBlobName = '';
+
+function resetDocResult(){
+  $('#docResult').classList.remove('show');
+  $('#docResultDl').classList.remove('show');
+  $('#docProg').classList.remove('show');
+  $('#docResultTxt').textContent='';
+  docBlob=null; docBlobName='';
+}
+
+/* Mode switch */
+$$('#docModeChips .doc-mode-chip').forEach(function(chip){
+  chip.addEventListener('click',function(){
+    $$('#docModeChips .doc-mode-chip').forEach(function(c){ c.classList.remove('active'); });
+    chip.classList.add('active');
+    docMode=chip.dataset.mode;
+    resetDocResult();
+    if(docMode==='file'){
+      $('#docFileArea').style.display='';
+      $('#docTextArea').classList.remove('show');
+    }else{
+      $('#docFileArea').style.display='none';
+      $('#docTextArea').classList.add('show');
+      docFile=null;
+    }
+    refreshDocActions();
+  });
+});
+
+$('#docTextIn').addEventListener('input',function(){
+  $('#docTextCnt').textContent=$('#docTextIn').value.length;
+  refreshDocActions();
+});
+
+/* Drop zone */
+var docDz=$('#docDz');
+var docFi=$('#docFile');
+docDz.addEventListener('click',function(){ docFi.click(); });
+docFi.addEventListener('change',function(e){ if(e.target.files[0]) handleDocFile(e.target.files[0]); });
+docDz.addEventListener('dragover',function(e){ e.preventDefault(); docDz.classList.add('drag-over'); });
+docDz.addEventListener('dragleave',function(){ docDz.classList.remove('drag-over'); });
+docDz.addEventListener('drop',function(e){
+  e.preventDefault(); docDz.classList.remove('drag-over');
+  if(e.dataTransfer.files[0]) handleDocFile(e.dataTransfer.files[0]);
+});
+
+function handleDocFile(file){
+  /* Validate type first (no reads yet) */
+  var name=file.name.toLowerCase(), ext=name.split('.').pop();
+  if(['docx','pdf','txt'].indexOf(ext)===-1){
+    $('#docUnsupported').classList.add('show');
+    $('#docUnsupportedMsg').textContent='不支持 .'+ext+'，请上传 .docx / .pdf / .txt';
+    return;
+  }
+  $('#docUnsupported').classList.remove('show');
+  /* Size gate – before reading into memory */
+  if(file.size > DOC_FILE){ showVip(); return; }
+  resetDocResult();
+  var reader=new FileReader();
+  reader.onload=function(e){
+    docFile={name:file.name,size:file.size,ext:ext,ab:e.target.result};
+    docDz.style.display='none';
+    var bar=$('#docInfoBar');
+    bar.classList.add('show');
+    $('#docIcon').textContent = ext==='pdf'?'📕':ext==='docx'?'📝':'📋';
+    $('#docName').textContent  = file.name;
+    $('#docMeta').textContent  = ext.toUpperCase()+' · '+fmtSize(file.size);
+    refreshDocActions();
+    toast('文件已加载: '+file.name);
+  };
+  reader.onerror=function(){ toast('文件读取失败','error'); };
+  reader.readAsArrayBuffer(file);
+}
+function fmtSize(bytes){
+  if(bytes<1024) return bytes+' B';
+  if(bytes<1048576) return (bytes/1024).toFixed(1)+' KB';
+  return (bytes/1048576).toFixed(2)+' MB';
+}
+
+$('#docRemove').addEventListener('click',function(){
+  docFile=null;
+  $('#docInfoBar').classList.remove('show');
+  docDz.style.display='';
+  resetDocResult();
+  refreshDocActions();
+  docFi.value='';
+});
+
+function refreshDocActions(){
+  var hasFile=(docMode==='file'&&docFile!==null);
+  var hasText=(docMode==='text'&&$('#docTextIn').value.trim().length>0);
+  $$('#docActions .conv-btn').forEach(function(btn){
+    var act=btn.dataset.action;
+    if(docMode==='file'){
+      if(docFile){
+        var ext=docFile.ext;
+        if(act==='docx2pdf') btn.disabled=(ext!=='docx');
+        else if(act==='pdf2text'||act==='pdf2word') btn.disabled=(ext!=='pdf');
+        else if(act==='text2word'||act==='text2pdf') btn.disabled=(ext!=='txt');
+        else btn.disabled=true;
+      }else btn.disabled=true;
+    }else{
+      btn.disabled = (act!=='text2word'&&act!=='text2pdf') || !hasText;
+    }
+  });
+  $('#docHint').style.display=(hasFile||hasText)?'none':'';
+}
+refreshDocActions();
+
+$('#docActions').addEventListener('click',function(e){
+  var btn=e.target.closest('.conv-btn');
+  if(!btn||btn.disabled) return;
+  execConv(btn.dataset.action);
+});
+
+function execConv(action){
+  resetDocResult();
+  $('#docProg').classList.add('show');
+  docProgUpdate(15,'正在准备…');
+  if(docMode==='file'&&docFile){
+    switch(action){
+      case 'docx2pdf':  convDocxToPdf(docFile.ab);   break;
+      case 'pdf2text':  convPdfToText(docFile.ab);   break;
+      case 'pdf2word':  convPdfToWord(docFile.ab);   break;
+      case 'text2word': convTxtFile('word');          break;
+      case 'text2pdf':  convTxtFile('pdf');           break;
+    }
+  } else if(docMode==='text'){
+    var text=$('#docTextIn').value.trim();
+    if(!text){ showConvErr('请先输入文字内容'); return; }
+    if(text.length>DOC_TEXT){ $('#docProg').classList.remove('show'); showVip(); return; }
+    if(action==='text2word') convTextToWord(text);
+    else if(action==='text2pdf') convTextToPdf(text);
+    else showConvErr('文本模式不支持该转换');
+  } else { showConvErr('请先上传文件或输入文本'); }
+}
+
+function docProgUpdate(pct,txt){
+  $('#docProgFill').style.width=pct+'%';
+  $('#docProgTxt').textContent=txt;
+}
+function showConvErr(msg){
+  $('#docProg').classList.remove('show');
+  $('#docResult').classList.add('show');
+  $('#docResultDl').classList.remove('show');
+  $('#docResultTxt').textContent='⚠ '+msg;
+  toast(msg,'error');
+}
+function finishConv(blob,filename,mime){
+  docProgUpdate(100,'转换完成！');
+  docBlob=blob; docBlobName=filename;
+  setTimeout(function(){
+    $('#docProg').classList.remove('show');
+    $('#docResult').classList.add('show');
+    $('#docResultDl').classList.add('show');
+    $('#docResultTxt').textContent='转换完成，点击下方按钮下载。\n文件名: '+filename+'\n大小: '+fmtSize(blob.size);
+    toast('转换完成: '+filename);
+  },500);
+}
+
+/* Word → PDF (via print) */
+function convDocxToPdf(ab){
+  if(typeof mammoth==='undefined'){ showConvErr('mammoth.js 加载失败，请刷新重试'); return; }
+  docProgUpdate(30,'正在解析 Word 文档…');
+  mammoth.convertToHtml({arrayBuffer:ab}).then(function(result){
+    var html=result.value;
+    if(!html||html.trim()==='<p></p>'){ showConvErr('Word 文档中无可提取的文字'); return; }
+    docProgUpdate(60,'正在打开打印窗口…');
+    var title=docFile.name.replace(/\.docx$/i,'');
+    printToPdf(html,title);
+  }).catch(function(e){ showConvErr('Word 解析失败: '+e.message); });
+}
+
+/* PDF → plain text */
+function convPdfToText(ab){
+  if(typeof pdfjsLib==='undefined'){ showConvErr('pdf.js 加载失败'); return; }
+  docProgUpdate(20,'正在解析 PDF…');
+  pdfjsLib.getDocument({data:ab}).promise.then(function(pdf){
+    var total=pdf.numPages, done=0, fullText='';
+    function doPage(n){
+      pdf.getPage(n).then(function(page){
+        return page.getTextContent();
+      }).then(function(tc){
+        var pt='', lastY=null;
+        tc.items.forEach(function(item){
+          if(lastY!==null && Math.abs(item.transform[5]-lastY)>4) pt+='\n';
+          else if(pt&&lastY!==null) pt+=' ';
+          pt+=item.str;
+          lastY=item.transform[5];
+        });
+        fullText+='\n── 第 '+n+' 页 ──\n'+pt;
+        done++;
+        docProgUpdate(20+Math.round(done/total*70),'提取文字 ('+done+'/'+total+')…');
+        if(done>=total){
+          docProgUpdate(100,'提取完成！');
+          setTimeout(function(){
+            $('#docProg').classList.remove('show');
+            $('#docResult').classList.add('show');
+            $('#docResultTxt').textContent=fullText;
+            toast('已提取 '+total+' 页文字');
+          },300);
+        }
+      }).catch(function(e){ showConvErr('页面 '+n+' 解析失败: '+e.message); });
+    }
+    for(var i=1;i<=total;i++) doPage(i);
+  }).catch(function(e){ showConvErr('PDF 解析失败: '+e.message); });
+}
+
+/* ── PDF → Word: DEEP REWRITE WITH HEURISTIC LAYOUT RESTORATION ── */
+function convPdfToWord(ab){
+  if(typeof pdfjsLib==='undefined'){ showConvErr('pdf.js 加载失败'); return; }
+  if(typeof docx==='undefined'){     showConvErr('docx 库加载失败'); return; }
+  docProgUpdate(10,'正在解析 PDF 结构…');
+
+  pdfjsLib.getDocument({data:ab}).promise.then(function(pdf){
+    var total=pdf.numPages, done=0, allParas=[];
+
+    function doPage(pn){
+      pdf.getPage(pn).then(function(page){
+        var vp=page.getViewport({scale:1.0});
+        return page.getTextContent({includeMarkedContent:false}).then(function(tc){
+          return {tc:tc, vw:vp.width, vh:vp.height};
+        });
+      }).then(function(r){
+        var tc=r.tc, vw=r.vw;
+
+        /* Step 1: collect items with coordinates & font size */
+        var items=[];
+        tc.items.forEach(function(item){
+          if(item.type==='beginMarkedContent'||item.type==='endMarkedContent') return;
+          var str=item.str||'';
+          var x=item.transform[4];
+          var y=item.transform[5];
+          /* Font size from transform matrix: sqrt(a^2+b^2) */
+          var fs=Math.sqrt(item.transform[0]*item.transform[0]+item.transform[1]*item.transform[1]);
+          fs=Math.max(fs,6);
+          items.push({str:str,x:x,y:y,w:item.width||0,fs:fs});
+        });
+        if(!items.length){ done++; check(); return; }
+
+        /* Step 2: cluster into lines by Y proximity (tolerance = 2pt) */
+        items.sort(function(a,b){
+          var dy=Math.abs(a.y-b.y);
+          if(dy<2) return a.x-b.x;
+          return b.y-a.y;
+        });
+        var lines=[], cur=null;
+        var LINE_TOL=2;
+        items.forEach(function(item){
+          if(!cur){ cur={y:item.y,items:[item],fs:item.fs}; }
+          else if(Math.abs(item.y-cur.y)<=LINE_TOL){
+            cur.items.push(item);
+            cur.y=(cur.y*(cur.items.length-1)+item.y)/cur.items.length;
+            cur.fs=Math.max(cur.fs,item.fs);
+          }else{
+            lines.push(cur);
+            cur={y:item.y,items:[item],fs:item.fs};
+          }
+        });
+        if(cur) lines.push(cur);
+
+        /* Step 3: reconstruct line text; detect indent */
+        var pageLeft=vw;
+        lines.forEach(function(line){
+          line.items.sort(function(a,b){ return a.x-b.x; });
+          if(line.items.length) pageLeft=Math.min(pageLeft,line.items[0].x);
+          var txt='', prev=null;
+          line.items.forEach(function(item){
+            if(!prev){ txt=item.str; }
+            else{
+              var gap=item.x-(prev.x+prev.w);
+              if(gap > prev.fs*0.30) txt+=' ';
+              txt+=item.str;
+            }
+            prev=item;
+          });
+          line.text=txt.trim();
+          line.indent=line.items.length?line.items[0].x:0;
+        });
+        /* Remove purely empty lines */
+        lines=lines.filter(function(l){ return l.text.length>0; });
+
+        /* Step 4: compute avg line height & avg font size */
+        var avgFs=lines.reduce(function(s,l){ return s+l.fs; },0)/Math.max(lines.length,1);
+        var lhArr=[];
+        for(var i=1;i<lines.length;i++) lhArr.push(Math.abs(lines[i-1].y-lines[i].y));
+        var avgLh=lhArr.length ? lhArr.reduce(function(a,b){return a+b;},0)/lhArr.length : 14;
+
+        /* Step 5: page break separator (except page 1) */
+        if(pn>1){
+          allParas.push(new docx.Paragraph({
+            children:[new docx.TextRun({text:'',break:1})],
+            spacing:{before:240,after:240}
+          }));
+        }
+
+        /* Step 6: build docx paragraphs */
+        for(var i=0;i<lines.length;i++){
+          var line=lines[i];
+          var prevY=i>0?(lines[i-1].y-line.y):avgLh;
+          var isHeading = line.fs > avgFs*1.25 && line.text.length<120;
+          var isNewPara = prevY > avgLh*1.55;
+          var isIndented= line.indent > pageLeft+8;
+
+          /* Font size in half-points (Word unit) */
+          var halfPt=Math.round(Math.max(line.fs,8)*2);
+          var runOpts={text:line.text, size:halfPt};
+          if(isHeading) runOpts.bold=true;
+
+          var paraOpts={
+            children:[new docx.TextRun(runOpts)],
+            spacing:{
+              before: isHeading?300:(isNewPara?180:0),
+              after:  isHeading?180:80,
+              line:360
+            }
+          };
+          if(isIndented){
+            var indentTwips=Math.round((line.indent-pageLeft)*20);
+            paraOpts.indent={left:Math.min(indentTwips,2880)};
+          }
+          if(isHeading){
+            /* Use Heading 2 style for detected headings */
+            try{ paraOpts.heading=docx.HeadingLevel.HEADING_2; }catch(ex){}
+          }
+          allParas.push(new docx.Paragraph(paraOpts));
+        }
+
+        done++;
+        docProgUpdate(10+Math.round(done/total*70),'处理中 ('+done+'/'+total+' 页)…');
+        check();
+      }).catch(function(e){ showConvErr('页面 '+pn+' 解析失败: '+e.message); });
+    }
+
+    function check(){
+      if(done>=total){
+        docProgUpdate(85,'正在生成 Word 文档…');
+        buildWordDoc(allParas);
+      }
+    }
+
+    for(var i=1;i<=total;i++) doPage(i);
+  }).catch(function(e){ showConvErr('PDF 解析失败: '+e.message); });
+}
+
+function buildWordDoc(paragraphs){
+  try{
+    var doc=new docx.Document({
+      creator:'Office Toolkit Suite',
+      title:'Converted Document',
+      styles:{
+        default:{
+          document:{run:{font:'Arial',size:22}}
+        }
+      },
+      sections:[{
+        properties:{
+          page:{margin:{top:1440,right:1080,bottom:1440,left:1080}}
+        },
+        children:paragraphs.length ? paragraphs : [
+          new docx.Paragraph({children:[new docx.TextRun({text:'（文档内容为空或无法提取）'})]})
+        ]
+      }]
+    });
+    docx.Packer.toBlob(doc).then(function(blob){
+      var name=(docFile?docFile.name:'document').replace(/\.pdf$/i,'.docx');
+      finishConv(blob,name,'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    }).catch(function(e){ showConvErr('Word 生成失败: '+e.message); });
+  }catch(e){ showConvErr('Word 生成失败: '+e.message); }
+}
+
+/* TXT file → Word or PDF */
+function convTxtFile(fmt){
+  docProgUpdate(30,'正在读取文本文件…');
+  setTimeout(function(){
+    try{
+      var text=new TextDecoder('utf-8').decode(new Uint8Array(docFile.ab));
+      if(!text.trim()){ showConvErr('文件内容为空'); return; }
+      if(text.length>DOC_TEXT){ $('#docProg').classList.remove('show'); showVip(); return; }
+      if(fmt==='word') convTextToWord(text);
+      else convTextToPdf(text);
+    }catch(e){ showConvErr('文件读取失败: '+e.message); }
+  },80);
+}
+
+/* Plain text → Word */
+function convTextToWord(text){
+  if(typeof docx==='undefined'){ showConvErr('docx 库加载失败'); return; }
+  docProgUpdate(40,'正在生成 Word 文档…');
+  setTimeout(function(){
+    try{
+      var paras=text.split('\n').map(function(line){
+        return new docx.Paragraph({
+          children:[new docx.TextRun({text:line||' ',size:22})],
+          spacing:{after:120}
+        });
+      });
+      var doc=new docx.Document({sections:[{properties:{},children:paras}]});
+      docx.Packer.toBlob(doc).then(function(blob){
+        finishConv(blob,'converted.docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      }).catch(function(e){ showConvErr('Word 生成失败: '+e.message); });
+    }catch(e){ showConvErr('Word 生成失败: '+e.message); }
+  },80);
+}
+
+/* Plain text → PDF (via browser print) */
+function convTextToPdf(text){
+  docProgUpdate(30,'正在准备打印内容…');
+  var paras=text.split('\n').map(function(l){
+    return '<p style="margin:0 0 4px">'+(l||'&nbsp;')+'</p>';
+  }).join('');
+  var bodyHtml='<div style="font-family:\'Microsoft YaHei\',\'PingFang SC\',sans-serif;font-size:11pt;color:#000;">'+paras+'</div>';
+  printToPdf(bodyHtml,'converted');
+}
+
+function printToPdf(bodyHtml,title){
+  docProgUpdate(70,'正在打开打印窗口…');
+  var pw=window.open('','_blank','width=900,height=700');
+  if(!pw){ showConvErr('弹窗被拦截，请允许弹出窗口后重试'); return; }
+  var fullHtml='<!DOCTYPE html><html><head><meta charset="UTF-8"><title>'+title+'</title>'+
+    '<style>@media print{@page{size:A4;margin:15mm 12mm;}body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}'+
+    'body{font-family:"Microsoft YaHei","PingFang SC","Noto Sans SC",sans-serif;font-size:11pt;line-height:1.8;color:#000;padding:20px;}'+
+    'table{border-collapse:collapse;width:100%;}td,th{border:1px solid #ccc;padding:4px 8px;}img{max-width:100%;}</style>'+
+    '</head><body>'+bodyHtml+'</body></html>';
+  var blob=new Blob([fullHtml],{type:'text/html;charset=UTF-8'});
+  var burl=URL.createObjectURL(blob);
+  pw.onload=function(){
+    URL.revokeObjectURL(burl);
+    docProgUpdate(90,'请在打印对话框中选择"另存为 PDF"…');
+    setTimeout(function(){
+      pw.print();
+      pw.onafterprint=function(){ pw.close(); resetDocResult(); };
+    },500);
+  };
+  pw.location.href=burl;
+  setTimeout(function(){ resetDocResult(); },8000);
+}
+
+$('#docDownload').addEventListener('click',function(){
+  if(!docBlob){ toast('没有可下载的文件','warning'); return; }
+  var url=URL.createObjectURL(docBlob);
+  var a=document.createElement('a'); a.href=url; a.download=docBlobName;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('已下载: '+docBlobName);
+});
+
+/* ─── Init console brand ─── */
+console.log('%c⚡ Office Toolkit Suite v2.0 %c5 Tools Ready',
+  'font-size:16px;font-weight:bold;color:#5b5bd6',
+  'font-size:13px;color:#8888a8');
+console.log('%c🔒 All processing is 100% local — no data leaves your browser.',
+  'color:#1a9e5c;font-size:12px');
+
+})();
+</script>
+</body>
+</html>
+JSEOF
+echo "JS written. Total size: $(wc -c < /home/claude/office-toolkit-v2.html) bytes, lines: $(wc -l < /home/claude/office-toolkit-v2.html)"
