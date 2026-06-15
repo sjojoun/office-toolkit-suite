@@ -429,7 +429,7 @@ input[type="checkbox"] { width: 14px; height: 14px; border-radius: var(--r-sm); 
           <span><span class="card-title-icon">📤</span> 输出结果</span>
           <div class="btn-group">
             <button class="btn btn-sm btn-ghost" id="convSwap" style="display:none;">🔁 交换</button>
-            <button class="btn btn-sm btn-ghost" id="convCopy">📋 复制</button>
+            <button class="btn btn-sm btn-ghost" id="convCopy">Copy</button>
           </div>
         </div>
         <textarea id="convOutput" placeholder="转换结果将显示在这里…" rows="6" readonly></textarea>
@@ -448,7 +448,7 @@ input[type="checkbox"] { width: 14px; height: 14px; border-radius: var(--r-sm); 
         <div class="card">
           <div class="card-title"><span class="card-title-icon">🖼️</span> 图片预览</div>
           <div class="drop-zone" id="imgDrop">
-            <span class="drop-icon">🏞️</span>
+            <span class="drop-icon">+</span>
             <div class="drop-text">点击上传或拖拽图片到此处</div>
             <div class="drop-hint">支持 JPG / PNG / WebP / GIF</div>
           </div>
@@ -567,7 +567,7 @@ input[type="checkbox"] { width: 14px; height: 14px; border-radius: var(--r-sm); 
               <div class="tmpl-regex">1[3-9]\d{9}</div>
             </div>
             <div class="tmpl-item" data-regex="https?://[^\s]+" data-flags="g" data-desc="URL">
-              <div class="tmpl-name">🔗 URL 链接</div>
+              <div class="tmpl-name">URL 链接</div>
               <div class="tmpl-regex">https?://[^\s]+</div>
             </div>
             <div class="tmpl-item" data-regex="\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}" data-flags="g" data-desc="IP地址">
@@ -615,7 +615,7 @@ input[type="checkbox"] { width: 14px; height: 14px; border-radius: var(--r-sm); 
           <div class="card">
             <div class="card-title" style="justify-content:space-between;">
               <span><span class="card-title-icon">📤</span> 输出结果</span>
-              <button class="btn btn-sm btn-ghost" id="copyCode">📋 复制</button>
+              <button class="btn btn-sm btn-ghost" id="copyCode">Copy</button>
             </div>
             <textarea id="codeOutput" placeholder="格式化结果将显示在这里…" rows="12" readonly></textarea>
           </div>
@@ -629,7 +629,7 @@ input[type="checkbox"] { width: 14px; height: 14px; border-radius: var(--r-sm); 
       <div class="sub-tabs">
         <button class="sub-tab active" data-sub="replace">🔁 查找替换</button>
         <button class="sub-tab" data-sub="split">✂ 分割</button>
-        <button class="sub-tab" data-sub="merge">🔗 合并</button>
+        <button class="sub-tab" data-sub="merge">合并</button>
         <button class="sub-tab" data-sub="clean">🧹 清理工具</button>
       </div>
 
@@ -654,7 +654,7 @@ input[type="checkbox"] { width: 14px; height: 14px; border-radius: var(--r-sm); 
           <div class="card-title" style="justify-content:space-between;">
             <span><span class="card-title-icon">📤</span> 输出结果</span>
             <div class="btn-group">
-              <button class="btn btn-sm btn-ghost" id="batchCopy">📋 复制</button>
+              <button class="btn btn-sm btn-ghost" id="batchCopy">Copy</button>
               <button class="btn btn-sm btn-ghost" id="batchDownload">⬇ 下载</button>
             </div>
           </div>
@@ -677,7 +677,7 @@ input[type="checkbox"] { width: 14px; height: 14px; border-radius: var(--r-sm); 
             <label class="txt-sm" style="display:flex;align-items:center;gap:5px;flex:none;">
               <input type="checkbox" id="useRegexReplace"> 正则
             </label>
-            <button class="btn btn-primary btn-sm" id="replaceBtn">🔄 全部替换</button>
+            <button class="btn btn-primary btn-sm" id="replaceBtn">全部替换</button>
             <button class="btn btn-sm btn-ghost" id="replacePreview">👁 查找计数</button>
           </div>
         </div>
@@ -707,7 +707,7 @@ input[type="checkbox"] { width: 14px; height: 14px; border-radius: var(--r-sm); 
           <div class="flex-row mb-10">
             <input type="text" id="mergeSep" placeholder="合并分隔符（支持 \n \t 转义）" value=",">
           </div>
-          <button class="btn btn-primary btn-sm" id="mergeBtn">🔗 合并所有行</button>
+          <button class="btn btn-primary btn-sm" id="mergeBtn">合并所有行</button>
         </div>
       </div>
 
@@ -717,10 +717,10 @@ input[type="checkbox"] { width: 14px; height: 14px; border-radius: var(--r-sm); 
           <div class="card-title"><span class="card-title-icon">🧹</span> 清理与格式化</div>
           <div class="btn-group">
             <button class="btn btn-sm btn-secondary" id="cleanSpaces">🧽 清理多余空格</button>
-            <button class="btn btn-sm btn-secondary" id="addLineNums">🔢 添加行号</button>
+            <button class="btn btn-sm btn-secondary" id="addLineNums">添加行号</button>
             <button class="btn btn-sm btn-secondary" id="removeBlank">🗑 删除空行</button>
             <button class="btn btn-sm btn-secondary" id="trimLines">✂ 去除首尾空格</button>
-            <button class="btn btn-sm btn-secondary" id="sortLines">🔤 按行排序</button>
+            <button class="btn btn-sm btn-secondary" id="sortLines">按行排序</button>
             <button class="btn btn-sm btn-ghost" id="gbkFix">🔧 GBK乱码修复</button>
           </div>
         </div>
@@ -738,7 +738,7 @@ input[type="checkbox"] { width: 14px; height: 14px; border-radius: var(--r-sm); 
         <div class="card-title"><span class="card-title-icon">📎</span> 输入模式</div>
         <div class="doc-mode-chips" id="docModeChips">
           <span class="doc-mode-chip active" data-mode="file">📁 上传文件</span>
-          <span class="doc-mode-chip" data-mode="text">📝 粘贴文本</span>
+          <span class="doc-mode-chip" data-mode="text">粘贴文本</span>
         </div>
       </div>
 
@@ -746,7 +746,7 @@ input[type="checkbox"] { width: 14px; height: 14px; border-radius: var(--r-sm); 
       <div id="docFileArea">
         <!-- Drop Zone -->
         <div class="doc-dropzone" id="docDz">
-          <span class="doc-dz-icon">📄</span>
+          <span class="doc-dz-icon">+</span>
           <div class="doc-dz-title">上传文档</div>
           <div class="doc-dz-sub">支持 .docx / .pdf / .txt 格式</div>
           <div class="doc-badges">
@@ -787,19 +787,19 @@ input[type="checkbox"] { width: 14px; height: 14px; border-radius: var(--r-sm); 
         <div class="card-title"><span class="card-title-icon">⚙️</span> 转换操作</div>
         <div class="conv-actions" id="docActions">
           <button class="conv-btn" data-action="docx2pdf" disabled>
-            <span class="c-icon">📝→📕</span> DOCX → PDF
+            <span class="c-icon">D</span> DOCX → PDF
           </button>
           <button class="conv-btn" data-action="pdf2text" disabled>
-            <span class="c-icon">📕→📋</span> PDF → 文本
+            <span class="c-icon">P</span> PDF → 文本
           </button>
           <button class="conv-btn" data-action="pdf2word" disabled>
-            <span class="c-icon">📕→📝</span> PDF → Word
+            <span class="c-icon">W</span> PDF → Word
           </button>
           <button class="conv-btn" data-action="text2word" disabled>
-            <span class="c-icon">📋→📝</span> 文本 → Word
+            <span class="c-icon">T</span> 文本 → Word
           </button>
           <button class="conv-btn" data-action="text2pdf" disabled>
-            <span class="c-icon">📋→📕</span> 文本 → PDF
+            <span class="c-icon">F</span> 文本 → PDF
           </button>
         </div>
         <div class="txt-sm mt-10" id="docHint" style="color:var(--text-3);">请先上传文件或输入文本</div>
@@ -1396,7 +1396,7 @@ function checkDocLibs(){
   if(typeof docx==='undefined') missing.push('docx');
   var note=$('#docLibNote');
   if(missing.length){ note.textContent='⚠ CDN 加载失败: '+missing.join('、')+' — 请检查网络并刷新'; note.className='note note-warning mt-10'; }
-  else{ note.textContent='✅ 所有组件就绪'; note.className='note note-success mt-10'; setTimeout(function(){ note.textContent='✨ PDF 通过浏览器原生引擎渲染，中英文完美支持'; note.className='note note-info mt-10'; },3000); }
+  else{ note.textContent='Ready'; note.className='note note-success mt-10'; setTimeout(function(){ note.textContent='PDF  through native engine, Chinese/English supported'; note.className='note note-info mt-10'; },3000); }
 }
 
 var docFile = null, docMode = 'file', docBlob = null, docBlobName = '';
@@ -1430,7 +1430,7 @@ function handleDocFile(file){
   reader.onload=function(e){
     docFile={name:file.name,size:file.size,ext:ext,ab:e.target.result};
     docDz.style.display='none'; var bar=$('#docInfoBar'); bar.classList.add('show');
-    $('#docIcon').textContent = ext==='pdf'?'📕':ext==='docx'?'📝':'📋';
+    $('#docIcon').textContent = ext==='pdf'?'P':ext==='docx'?'D':'T';
     $('#docName').textContent = file.name; $('#docMeta').textContent = ext.toUpperCase()+' · '+fmtSize(file.size);
     refreshDocActions(); toast('文件已加载: '+file.name);
   };
